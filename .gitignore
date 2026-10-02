@@ -34,3 +34,4 @@ database.sqlite
 /.agent_context/*
 
 .agent_context/
+.vectorcode/
