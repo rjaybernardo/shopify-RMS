@@ -32,3 +32,81 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+// Per-shop return policy configuration.
+model ShopSettings {
+  shop                String   @id
+  returnWindowDays    Int      @default(30)
+  autoApprove         Boolean  @default(false)
+  autoRefundOnReceipt Boolean  @default(true)
+  restockOnReceipt    Boolean  @default(true)
+  notifyMerchantEmail String?
+  portalIntro         String   @default("Start a return in a few clicks. You'll need your order number and the email used at checkout.")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+// Local mirror of a Shopify Return, enriched with label, refund and timing data for analytics.
+model ReturnRequest {
+  id               String              @id @default(cuid())
+  shop             String
+  shopifyReturnId  String?             @unique
+  returnName       String?
+  orderId          String
+  orderName        String
+  customerEmail    String
+  customerName     String?
+  // REQUESTED | APPROVED | DECLINED | LABEL_SENT | RECEIVED | REFUNDED | CANCELED | CLOSED
+  status           String              @default("REQUESTED")
+  source           String              @default("PORTAL")
+  customerNote     String?
+  declineReason    String?
+  declineNote      String?
+  carrier          String?
+  trackingNumber   String?
+  trackingUrl      String?
+  labelUrl         String?
+  labelToken       String?             @unique
+  labelCost        Float?
+  refundAmount     Float?
+  currencyCode     String?
+  requestedAt      DateTime            @default(now())
+  approvedAt       DateTime?
+  labelSentAt      DateTime?
+  receivedAt       DateTime?
+  refundedAt       DateTime?
+  closedAt         DateTime?
+  updatedAt        DateTime            @updatedAt
+  items            ReturnLineItem[]
+  events           ReturnEvent[]
+
+  @@index([shop, status])
+  @@index([shop, requestedAt])
+}
+
+model ReturnLineItem {
+  id                    String        @id @default(cuid())
+  returnRequestId       String
+  returnRequest         ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  fulfillmentLineItemId String
+  title                 String
+  variantTitle          String?
+  sku                   String?
+  imageUrl              String?
+  quantity              Int
+  unitPrice             Float
+  reasonHandle          String
+  reasonName            String
+  customerNote          String?
+}
+
+// Audit trail rendered as a timeline on the return detail page.
+model ReturnEvent {
+  id              String        @id @default(cuid())
+  returnRequestId String
+  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  type            String
+  message         String
+  actor           String        @default("system")
+  createdAt       DateTime      @default(now())
+}

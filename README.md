@@ -1,3 +1,64 @@
+# Returns Management System (RMA)
+
+An embedded Shopify app that automates the returns workflow end to end: a customer
+self-service portal, one-click approval with prepaid return labels, automatic refunds
+on receipt, and a returns analytics dashboard. Built on Shopify's native **Returns API**
+so every return also appears on the order in the Shopify admin.
+
+## Flow
+
+```
+Customer portal ──returnRequest──▶ REQUESTED ──returnApproveRequest──▶ APPROVED
+  (/apps/returns)                      │                                   │ label provider + reverseDeliveryCreateWithShipping
+                                       └─returnDeclineRequest─▶ DECLINED   ▼
+                                                                       LABEL_SENT ──Mark received──▶ RECEIVED
+                                                                                                        │ suggestedFinancialOutcome
+                                                                                                        ▼ + returnProcess (refund + restock)
+                                                                                                     REFUNDED
+```
+
+Webhooks (`returns/request|approve|decline|cancel|close`) keep the local mirror in sync,
+including returns created directly in the Shopify admin. Status only moves forward, so
+webhook echoes of the app's own mutations are harmless.
+
+## Features
+
+| Feature | Where |
+| --- | --- |
+| Customer return portal (theme-rendered via app proxy, HMAC-signed steps, return-window check) | `app/routes/proxy.returns.tsx` |
+| Approve / decline / mark received / refund, with event timeline | `app/routes/app.returns.$id.tsx` |
+| Filterable, searchable returns list | `app/routes/app.returns._index.tsx` |
+| Dashboard: volume, refunded value, time-to-approve/refund, top reasons & products | `app/routes/app._index.tsx` |
+| Settings: return window, auto-approve, auto-refund, restock, merchant alerts | `app/routes/app.settings.tsx` |
+| Return labels: EasyPost (live) or built-in sandbox PDF labels | `app/services/shipping.server.ts` |
+| Transactional email: Resend (live) or console log | `app/services/email.server.ts` |
+| Returns API wrappers (all operations validated against Admin API 2026-07) | `app/services/shopify-returns.server.ts` |
+| Workflow / state machine / analytics | `app/services/returns.server.ts` |
+| Privacy compliance webhooks | `app/routes/webhooks.compliance.tsx` |
+
+## Running locally
+
+```sh
+npm install
+npm run dev          # shopify app dev — creates tunnel, updates app proxy + webhook URLs
+```
+
+Then open the app from your dev store, place a test order, fulfil it, and visit
+`https://<your-store>.myshopify.com/apps/returns` to start a return.
+
+Optional environment variables:
+
+| Variable | Effect |
+| --- | --- |
+| `EASYPOST_API_KEY` | Buy real return labels (cheapest rate) instead of sandbox PDFs |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Send customer/merchant emails instead of logging them |
+
+Scopes: `read_orders,write_returns,read_locations`. Because the portal reads order email
+and shipping address, request **protected customer data** access (name, email, address)
+in the Partner Dashboard. Orders older than 60 days additionally need `read_all_orders`.
+
+---
+
 # Shopify App Template - React Router
 
 This is a template for building a [Shopify app](https://shopify.dev/docs/apps/getting-started) using [React Router](https://reactrouter.com/). It was forked from the [Shopify Remix app template](https://github.com/Shopify/shopify-app-template-remix) and converted to React Router.
