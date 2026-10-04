@@ -1,298 +1,78 @@
-# Returns Management System (RMA)
+# Returns Management System
 
-An embedded Shopify app that automates the returns workflow end to end: a customer
-self-service portal, one-click approval with prepaid return labels, automatic refunds
-on receipt, and a returns analytics dashboard. Built on Shopify's native **Returns API**
-so every return also appears on the order in the Shopify admin.
+An embedded Shopify app that handles returns end to end: customers request a return from a self-service portal on the store, and the merchant approves, labels, receives and refunds it from one queue. It's built on Shopify's native Returns API, so every return also shows up on the order in the Shopify admin.
 
-## Flow
+![Returns dashboard](screenshots/rms-01.png)
 
-```
-Customer portal ──returnRequest──▶ REQUESTED ──returnApproveRequest──▶ APPROVED
-  (/apps/returns)                      │                                   │ label provider + reverseDeliveryCreateWithShipping
-                                       └─returnDeclineRequest─▶ DECLINED   ▼
-                                                                       LABEL_SENT ──Mark received──▶ RECEIVED
-                                                                                                        │ suggestedFinancialOutcome
-                                                                                                        ▼ + returnProcess (refund + restock)
-                                                                                                     REFUNDED
-```
+## What it does
 
-Webhooks (`returns/request|approve|decline|cancel|close`) keep the local mirror in sync,
-including returns created directly in the Shopify admin. Status only moves forward, so
-webhook echoes of the app's own mutations are harmless.
+Handling returns by hand means answering emails, checking order dates, making shipping labels, and remembering to refund and restock once the parcel arrives. This app does that work for the merchant:
+
+- Customers start a return themselves by entering their order number and checkout email. The app checks that the order is within the return window and only offers items that Shopify reports as returnable.
+- The merchant approves with one click. The app creates a prepaid return label, attaches the tracking to the return in Shopify, and emails the label to the customer.
+- When the parcel arrives, the merchant marks it received. The app then refunds the original payment method and restocks the items automatically, if those settings are on.
+- The dashboard shows how many returns came in, how much was refunded, how long approvals and refunds take, what labels cost, and which reasons and products come up most.
+
+## How to use it
+
+1. Open **Settings**, set the **Return window (days)** and choose whether to **Auto-approve requests**, **Refund automatically when items are received** and **Restock items when received**. Optionally add an email under **Notify this address about new requests** and edit the **Portal introduction**, then click **Save**.
+2. Copy the link under **Customer return portal** (`https://<store>.myshopify.com/apps/returns`) and add it to your store's footer or order emails.
+3. A customer opens the portal, enters their **Order number** and **Email used at checkout**, clicks **Find my order**, picks the items, a quantity and a reason for each, and clicks **Submit return request**.
+4. On the **Dashboard**, click **Review requests (n)**, or open **Returns** and select the return.
+5. Click **Approve & send label**, or **Decline** and choose a reason with an optional **Message to customer**.
+6. When the parcel arrives, click **Mark as received**. If auto-refund is off, click **Issue refund** afterwards.
 
 ## Features
 
-| Feature | Where |
-| --- | --- |
-| Customer return portal (theme-rendered via app proxy, HMAC-signed steps, return-window check) | `app/routes/proxy.returns.tsx` |
-| Approve / decline / mark received / refund, with event timeline | `app/routes/app.returns.$id.tsx` |
-| Filterable, searchable returns list | `app/routes/app.returns._index.tsx` |
-| Dashboard: volume, refunded value, time-to-approve/refund, top reasons & products | `app/routes/app._index.tsx` |
-| Settings: return window, auto-approve, auto-refund, restock, merchant alerts | `app/routes/app.settings.tsx` |
-| Return labels: EasyPost (live) or built-in sandbox PDF labels | `app/services/shipping.server.ts` |
-| Transactional email: Resend (live) or console log | `app/services/email.server.ts` |
-| Returns API wrappers (all operations validated against Admin API 2026-07) | `app/services/shopify-returns.server.ts` |
-| Workflow / state machine / analytics | `app/services/returns.server.ts` |
-| Privacy compliance webhooks | `app/routes/webhooks.compliance.tsx` |
+- **Dashboard:** returns count and open returns, refunded total, average time to approve and to refund, label spend, a daily return volume chart, top return reasons, most returned products, a status pipeline and recent returns. Ranges: last 7, 30 or 90 days.
+- **Returns:** a list of all returns with search (order, return, customer or tracking number), a status filter and pagination.
+- **Return detail:** items with reasons and customer notes, item value and refunded amount, the actions for the current status, an event timeline, and the return shipment (carrier, tracking link, **Print label**, postage cost).
+- **Settings:** return policy, merchant alert email, portal intro text, the portal link, and whether shipping labels and email are live or in sandbox / log-only mode.
+- **Customer return portal:** rendered inside the store's theme through a Shopify app proxy.
+- **Customer emails:** request received, label (on approval), decline with the merchant's message, and refund confirmation. The merchant gets an alert email for each new request.
+- **Sync with Shopify admin:** returns created or changed directly in Shopify (requested, approved, declined, canceled, closed) are mirrored in the app through webhooks.
+- **Privacy compliance webhooks** for customer data requests and redaction.
 
-## Running locally
+## How it works
+
+- **Status flow:** Requested → Approved → Label sent → Received → Refunded, or Requested → Declined. Returns can also end as Closed or Canceled from Shopify. A status only ever moves forward, so webhook echoes of the app's own actions can't roll a return back.
+- **Return window:** an order can be returned if `now − order processed date ≤ return window days`.
+- **Portal security:** an unknown order and a wrong email give the same error, so order numbers can't be guessed. After lookup, a signed token (HMAC-SHA256, valid 30 minutes) ties the next step to that order, and requested quantities are capped at Shopify's returnable quantity.
+- **Labels:** with an EasyPost key, the app buys the cheapest rate for a return shipment, using an estimated parcel weight of 16 oz per unit. Without a key, it generates a sandbox PDF label marked as not valid for postage.
+- **Refunds:** the refund amount comes from Shopify's suggested financial outcome for the returned items, refunded to the original payment methods. Restocking goes to the first active location Shopify returns for the shop.
+- **Dashboard metrics:** average time to approve = mean of (approved − requested) hours; average time to refund = mean of (refunded − requested) hours; label spend = sum of label costs; top reasons and products are ranked by units returned.
+
+## Screenshots
+
+| Returns | Settings |
+| --- | --- |
+| ![Returns list with search and status filter](screenshots/rms-02.png) | ![Settings with return policy, notifications, portal link and integrations](screenshots/rms-03.png) |
+| Returns list with search and the status filter open | Return policy, notifications, portal link and integration status |
+
+## Tech stack
+
+React Router 7 with the Shopify app template, Polaris web components, Prisma + SQLite, Admin GraphQL API 2026-07, scopes `read_orders`, `write_returns`, `read_locations`.
+
+## Run locally
+
+Requires Node 22.12+ and the Shopify CLI.
 
 ```sh
 npm install
-npm run dev          # shopify app dev — creates tunnel, updates app proxy + webhook URLs
+npm run setup   # generate the Prisma client and run migrations
+npm run dev     # shopify app dev
 ```
 
-Then open the app from your dev store, place a test order, fulfil it, and visit
-`https://<your-store>.myshopify.com/apps/returns` to start a return.
-
-Optional environment variables:
-
-| Variable | Effect |
-| --- | --- |
-| `EASYPOST_API_KEY` | Buy real return labels (cheapest rate) instead of sandbox PDFs |
-| `RESEND_API_KEY`, `EMAIL_FROM` | Send customer/merchant emails instead of logging them |
-
-Scopes: `read_orders,write_returns,read_locations`. Because the portal reads order email
-and shipping address, request **protected customer data** access (name, email, address)
-in the Partner Dashboard. Orders older than 60 days additionally need `read_all_orders`.
-
----
-
-# Shopify App Template - React Router
-
-This is a template for building a [Shopify app](https://shopify.dev/docs/apps/getting-started) using [React Router](https://reactrouter.com/). It was forked from the [Shopify Remix app template](https://github.com/Shopify/shopify-app-template-remix) and converted to React Router.
-
-Rather than cloning this repo, follow the [Quick Start steps](https://github.com/Shopify/shopify-app-template-react-router#quick-start).
-
-Visit the [`shopify.dev` documentation](https://shopify.dev/docs/api/shopify-app-react-router) for more details on the React Router app package.
-
-## Upgrading from Remix
-
-If you have an existing Remix app that you want to upgrade to React Router, please follow the [upgrade guide](https://github.com/Shopify/shopify-app-template-react-router/wiki/Upgrading-from-Remix). Otherwise, please follow the quick start guide below.
-
-## Quick start
-
-### Prerequisites
-
-Before you begin, you'll need to [download and install the Shopify CLI](https://shopify.dev/docs/apps/tools/cli/getting-started) if you haven't already.
-
-### Setup
-
-```shell
-shopify app init --template=https://github.com/Shopify/shopify-app-template-react-router
-```
-
-### Local Development
-
-```shell
-shopify app dev
-```
-
-Press P to open the URL to your app. Once you click install, you can start development.
-
-Local development is powered by [the Shopify CLI](https://shopify.dev/docs/apps/tools/cli). It logs into your account, connects to an app, provides environment variables, updates remote config, creates a tunnel and provides commands to generate extensions.
-
-### Authenticating and querying data
-
-To authenticate and query data you can use the `shopify` const that is exported from `/app/shopify.server.js`:
-
-```js
-export async function loader({ request }) {
-  const { admin } = await shopify.authenticate.admin(request);
-
-  const response = await admin.graphql(`
-    {
-      products(first: 25) {
-        nodes {
-          title
-          description
-        }
-      }
-    }`);
-
-  const {
-    data: {
-      products: { nodes },
-    },
-  } = await response.json();
-
-  return nodes;
-}
-```
-
-This template comes pre-configured with examples of:
-
-1. Setting up your Shopify app in [/app/shopify.server.ts](https://github.com/Shopify/shopify-app-template-react-router/blob/main/app/shopify.server.ts)
-2. Querying data using Graphql. Please see: [/app/routes/app.\_index.tsx](https://github.com/Shopify/shopify-app-template-react-router/blob/main/app/routes/app._index.tsx).
-3. Responding to webhooks. Please see [/app/routes/webhooks.tsx](https://github.com/Shopify/shopify-app-template-react-router/blob/main/app/routes/webhooks.app.uninstalled.tsx).
-4. Using metafields, metaobjects, and declarative custom data definitions. Please see [/app/routes/app.\_index.tsx](https://github.com/Shopify/shopify-app-template-react-router/blob/main/app/routes/app._index.tsx) and [shopify.app.toml](https://github.com/Shopify/shopify-app-template-react-router/blob/main/shopify.app.toml).
-
-Please read the [documentation for @shopify/shopify-app-react-router](https://shopify.dev/docs/api/shopify-app-react-router) to see what other API's are available.
-
-## Shopify Dev MCP
-
-This template is configured with the Shopify Dev MCP. This instructs [Cursor](https://cursor.com/), [GitHub Copilot](https://github.com/features/copilot) and [Claude Code](https://claude.com/product/claude-code) and [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) to use the Shopify Dev MCP.
-
-For more information on the Shopify Dev MCP please read [the documentation](https://shopify.dev/docs/apps/build/devmcp).
-
-## Deployment
-
-### Application Storage
-
-This template uses [Prisma](https://www.prisma.io/) to store session data, by default using an [SQLite](https://www.sqlite.org/index.html) database.
-The database is defined as a Prisma schema in `prisma/schema.prisma`.
-
-This use of SQLite works in production if your app runs as a single instance.
-The database that works best for you depends on the data your app needs and how it is queried.
-Here’s a short list of databases providers that provide a free tier to get started:
-
-| Database   | Type             | Hosters                                                                                                                                                                                                                                    |
-| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| MySQL      | SQL              | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-mysql), [Planet Scale](https://planetscale.com/), [Amazon Aurora](https://aws.amazon.com/rds/aurora/), [Google Cloud SQL](https://cloud.google.com/sql/docs/mysql) |
-| PostgreSQL | SQL              | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-postgresql), [Amazon Aurora](https://aws.amazon.com/rds/aurora/), [Google Cloud SQL](https://cloud.google.com/sql/docs/postgres)                                   |
-| Redis      | Key-value        | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-redis), [Amazon MemoryDB](https://aws.amazon.com/memorydb/)                                                                                                        |
-| MongoDB    | NoSQL / Document | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-mongodb), [MongoDB Atlas](https://www.mongodb.com/atlas/database)                                                                                                  |
-
-To use one of these, you can use a different [datasource provider](https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#datasource) in your `schema.prisma` file, or a different [SessionStorage adapter package](https://github.com/Shopify/shopify-api-js/blob/main/packages/shopify-api/docs/guides/session-storage.md).
-
-### Build
-
-Build the app by running the command below with the package manager of your choice:
-
-Using yarn:
-
-```shell
-yarn build
-```
-
-Using npm:
-
-```shell
-npm run build
-```
-
-Using pnpm:
-
-```shell
-pnpm run build
-```
-
-## Hosting
-
-When you're ready to set up your app in production, you can follow [our deployment documentation](https://shopify.dev/docs/apps/launch/deployment) to host it externally. From there, you have a few options:
-
-- [Google Cloud Run](https://shopify.dev/docs/apps/launch/deployment/deploy-to-google-cloud-run): This tutorial is written specifically for this example repo, and is compatible with the extended steps included in the subsequent [**Build your app**](tutorial) in the **Getting started** docs. It is the most detailed tutorial for taking a React Router-based Shopify app and deploying it to production. It includes configuring permissions and secrets, setting up a production database, and even hosting your apps behind a load balancer across multiple regions.
-- [Fly.io](https://fly.io/docs/js/shopify/): Leverages the Fly.io CLI to quickly launch Shopify apps to a single machine.
-- [Render](https://render.com/docs/deploy-shopify-app): This tutorial guides you through using Docker to deploy and install apps on a Dev store.
-- [Manual deployment guide](https://shopify.dev/docs/apps/launch/deployment/deploy-to-hosting-service): This resource provides general guidance on the requirements of deployment including environment variables, secrets, and persistent data.
-
-When you reach the step for [setting up environment variables](https://shopify.dev/docs/apps/deployment/web#set-env-vars), you also need to set the variable `NODE_ENV=production`.
-
-## Gotchas / Troubleshooting
-
-### Database tables don't exist
-
-If you get an error like:
-
-```
-The table `main.Session` does not exist in the current database.
-```
-
-Create the database for Prisma. Run the `setup` script in `package.json` using `npm`, `yarn` or `pnpm`.
-
-### Navigating/redirecting breaks an embedded app
-
-Embedded apps must maintain the user session, which can be tricky inside an iFrame. To avoid issues:
-
-1. Use `Link` from `react-router` or `@shopify/polaris`. Do not use `<a>`.
-2. Use `redirect` returned from `authenticate.admin`. Do not use `redirect` from `react-router`
-3. Use `useSubmit` from `react-router`.
-
-This only applies if your app is embedded, which it will be by default.
-
-### Webhooks: shop-specific webhook subscriptions aren't updated
-
-If you are registering webhooks in the `afterAuth` hook, using `shopify.registerWebhooks`, you may find that your subscriptions aren't being updated.
-
-Instead of using the `afterAuth` hook declare app-specific webhooks in the `shopify.app.toml` file. This approach is easier since Shopify will automatically sync changes every time you run `deploy` (e.g: `npm run deploy`). Please read these guides to understand more:
-
-1. [app-specific vs shop-specific webhooks](https://shopify.dev/docs/apps/build/webhooks/subscribe#app-specific-subscriptions)
-2. [Create a subscription tutorial](https://shopify.dev/docs/apps/build/webhooks/subscribe/get-started?deliveryMethod=https)
-
-If you do need shop-specific webhooks, keep in mind that the package calls `afterAuth` in 2 scenarios:
-
-- After installing the app
-- When an access token expires
-
-During normal development, the app won't need to re-authenticate most of the time, so shop-specific subscriptions aren't updated. To force your app to update the subscriptions, uninstall and reinstall the app. Revisiting the app will call the `afterAuth` hook.
-
-### Webhooks: Admin created webhook failing HMAC validation
-
-Webhooks subscriptions created in the [Shopify admin](https://help.shopify.com/en/manual/orders/notifications/webhooks) will fail HMAC validation. This is because the webhook payload is not signed with your app's secret key.
-
-The recommended solution is to use [app-specific webhooks](https://shopify.dev/docs/apps/build/webhooks/subscribe#app-specific-subscriptions) defined in your toml file instead. Test your webhooks by triggering events manually in the Shopify admin(e.g. Updating the product title to trigger a `PRODUCTS_UPDATE`).
-
-### Webhooks: Admin object undefined on webhook events triggered by the CLI
-
-When you trigger a webhook event using the Shopify CLI, the `admin` object will be `undefined`. This is because the CLI triggers an event with a valid, but non-existent, shop. The `admin` object is only available when the webhook is triggered by a shop that has installed the app. This is expected.
-
-Webhooks triggered by the CLI are intended for initial experimentation testing of your webhook configuration. For more information on how to test your webhooks, see the [Shopify CLI documentation](https://shopify.dev/docs/apps/tools/cli/commands#webhook-trigger).
-
-### Incorrect GraphQL Hints
-
-By default the [graphql.vscode-graphql](https://marketplace.visualstudio.com/items?itemName=GraphQL.vscode-graphql) extension for will assume that GraphQL queries or mutations are for the [Shopify Admin API](https://shopify.dev/docs/api/admin). This is a sensible default, but it may not be true if:
-
-1. You use another Shopify API such as the storefront API.
-2. You use a third party GraphQL API.
-
-If so, please update [.graphqlrc.ts](https://github.com/Shopify/shopify-app-template-react-router/blob/main/.graphqlrc.ts).
-
-### Using Defer & await for streaming responses
-
-By default the CLI uses a cloudflare tunnel. Unfortunately cloudflare tunnels wait for the Response stream to finish, then sends one chunk. This will not affect production.
-
-To test [streaming using await](https://reactrouter.com/api/components/Await#await) during local development we recommend [localhost based development](https://shopify.dev/docs/apps/build/cli-for-apps/networking-options#localhost-based-development).
-
-### "nbf" claim timestamp check failed
-
-This is because a JWT token is expired. If you are consistently getting this error, it could be that the clock on your machine is not in sync with the server. To fix this ensure you have enabled "Set time and date automatically" in the "Date and Time" settings on your computer.
-
-### Using MongoDB and Prisma
-
-If you choose to use MongoDB with Prisma, there are some gotchas in Prisma's MongoDB support to be aware of. Please see the [Prisma SessionStorage README](https://www.npmjs.com/package/@shopify/shopify-app-session-storage-prisma#mongodb).
-
-### Unable to require(`C:\...\query_engine-windows.dll.node`).
-
-Unable to require(`C:\...\query_engine-windows.dll.node`).
-The Prisma engines do not seem to be compatible with your system.
-
-query_engine-windows.dll.node is not a valid Win32 application.
-
-**Fix:** Set the environment variable:
-
-```shell
-PRISMA_CLIENT_ENGINE_TYPE=binary
-```
-
-This forces Prisma to use the binary engine mode, which runs the query engine as a separate process and can work via emulation on Windows ARM64.
-
-## Resources
-
-React Router:
-
-- [React Router docs](https://reactrouter.com/home)
-
-Shopify:
-
-- [Intro to Shopify apps](https://shopify.dev/docs/apps/getting-started)
-- [Shopify App React Router docs](https://shopify.dev/docs/api/shopify-app-react-router)
-- [Shopify CLI](https://shopify.dev/docs/apps/tools/cli)
-- [Shopify App Bridge](https://shopify.dev/docs/api/app-bridge-library).
-- [Polaris Web Components](https://shopify.dev/docs/api/app-home/polaris-web-components).
-- [App extensions](https://shopify.dev/docs/apps/app-extensions/list)
-- [Shopify Functions](https://shopify.dev/docs/api/functions)
-
-Internationalization:
-
-- [Internationalizing your app](https://shopify.dev/docs/apps/best-practices/internationalization/getting-started)
+Then install the app on a development store, place and fulfil a test order, and open `https://<store>.myshopify.com/apps/returns`.
+
+| Variable | Effect when set | Default |
+| --- | --- | --- |
+| `EASYPOST_API_KEY` | Buys real return labels through EasyPost | Sandbox PDF labels (not valid for postage) |
+| `RESEND_API_KEY` | Sends emails through Resend | Emails are only logged to the console |
+| `EMAIL_FROM` | Sender address for emails | `Returns <returns@example.com>` |
+
+Notes:
+
+- The portal reads customer emails and addresses, so the app needs **protected customer data** access (name, email, address) approved in the Partner Dashboard.
+- Orders older than 60 days need the `read_all_orders` scope, which this app doesn't request.
+- Receiving is manual. There is no carrier tracking webhook yet, so returns aren't marked received automatically.
