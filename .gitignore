@@ -35,3 +35,6 @@ database.sqlite
 
 .agent_context/
 .vectorcode/
+
+# Local AI assistant instructions
+CLAUDE.md
